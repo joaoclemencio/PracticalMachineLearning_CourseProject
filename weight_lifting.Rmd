@@ -1,0 +1,118 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Joao Clemencio"
+date: "2 July 2016"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Prediction of Correct Exercise Methodology
+
+This document will demonstrate how machine learning prediction algorithms can be used to determine how well an exercise such as barbell lifting is being performed, through the use of fitness wearables. The dataset used is kindly provided by Wallace Ugulino, Eduardo Velloso and Hugo Fuks through their Human Activity Recognition project. For more details, see <http://groupware.les.inf.puc-rio.br/har>.
+
+Here is the full provided background for this project:
+
+*Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: <http://groupware.les.inf.puc-rio.br/har> (see the section on the Weight Lifting Exercise Dataset).*
+
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13) . Stuttgart, Germany: ACM SIGCHI, 2013.
+
+The final prediction model will be applied to 20 different test cases.
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+require(caret)
+require(downloader)
+require(dplyr)
+require(randomForest)
+```
+## Data load and variable selection
+
+```{r data_download}
+training_url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+training_filename <- "training.csv"
+if (!file.exists(training_filename)) download(training_url,training_filename)
+
+testing_url <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+testing_filename <- "testing.csv"
+if (!file.exists(testing_filename)) download(testing_url,testing_filename)
+```
+
+A first look at the training data revealed some values which were absent were either blank or marked as "NA", "NULL" or MS Excel errors such as "#Div/0". These were converted to NA's on the data import.
+
+```{r data_load}
+training_base <- read.csv(file = "training.csv", na.strings = c("", "NA", "NULL", "#DIV/0!"))
+dim(training_base)
+
+testing_base <- read.csv(file = "testing.csv", na.strings = c("", "NA", "NULL", "#DIV/0!"))
+dim(testing_base)
+```
+
+There are 160 variables to consider. Many of these are derived variables that are only not null when `new_window == "yes"`; therefore, any variables which have NULL values will be excluded from the final model. 
+
+The first 7 variables of the dataset are not measurements and will also be excluded from the model.
+
+We are left with 52 features and the `classe` result. This will be the input to our model. The testing data has also been subset in the same 
+
+```{r variable_cleanup}
+training_base_1 = training_base[, colSums(is.na(training_base)) == 0] #remove NA's
+training = training_base_1[, -(1:7)] #remove non-measurements
+dim(training)
+feature_names = names(training[,-53])
+testing = testing_base[,c(feature_names, "problem_id")]
+dim(testing)
+```
+## Preprocessing and data splitting.
+
+The data will be centred and scaled via the `preprocess` function ran on the training dataset. The preprocessing is then applied to both the training and the testing dataset.
+
+```{r preprocess}
+preproc = preProcess(training[,-53], method = c("center", "scale"))
+training.pp = data.frame(predict(preproc, training[,-53]), training[,53]); names(training.pp) = names(training)
+testing.pp = data.frame(predict(preproc, testing[,-53]), testing[,53]); names(testing.pp) = names(testing)
+```
+
+We will perform some checks on the data and preprocess it for the most accurate results. 
+
+```{r nearZeroVariance}
+zVar = nearZeroVar(training.pp, saveMetrics = FALSE)
+```
+
+No near-zero variables exist, so all will be considered. 
+The preprocessed training data will now be split into a training and a test set for cross validation before it is applied to the final test set.
+
+```{r splitting}
+set.seed(123454321)
+training.pp.dpt = createDataPartition(y = training.pp$classe, p = 0.75, list = FALSE)
+training.pp.train = training.pp[training.pp.dpt,]
+training.pp.test = training.pp[-training.pp.dpt,]
+dim(training.pp.train); dim(training.pp.test)
+```
+
+## Model creation and cross validation
+
+The model will be created using the `randomForest` method. This runs several decision trees and automatically selects the most accurate ones for a better final model. While it is not as interpretable as a simple decision tree, and while it is also considerably slower than other algorithms, these are not two contraints we have for this problem, and so Random Forests can be applied here.
+
+```{r rfs}
+mod_rf = randomForest(classe ~ ., data = training.pp.train)
+mod_rf
+```
+
+Calculating the in and out of sample estimates:
+
+```{r crossvalidation}
+in.sample.accuracy = sum(predict(mod_rf, training.pp.train) == training.pp.train$classe) / nrow(training.pp.train)
+paste0("In sample accuracy: ", in.sample.accuracy)
+out.of.sample.accuracy = sum(predict(mod_rf, training.pp.test) == training.pp.test$classe) / nrow(training.pp.test)
+paste0("Out of sample accuracy: ", out.of.sample.accuracy)
+```
+
+## Application to the final test set
+
+We will now apply the random forest model to the final test set.
+
+```{r applic}
+predict(mod_rf, testing.pp)
+```
